@@ -1,0 +1,155 @@
+#include<FEHLCD.h>
+#include<FEHIO.h>
+#include<FEHUtility.h>
+#include<FEHMotor.h>
+#include<FEHServo.h>
+#include<FEHUtility.h>
+
+FEHMotor leftMotor (FEHMotor:: Motor0,12.0);
+FEHMotor rightMotor (FEHMotor:: Motor1,12.0);
+
+FEHServo topServo (FEHServo:: Servo0);
+FEHServo bottomServo (FEHServo:: Servo1);
+
+AnalogInputPin sensor(FEHIO::P1_0);
+
+DigitalInputPin frontLeftBumper(FEHIO:: P2_0);    //Each nonzero value is the int passed to "DriveToWall"
+DigitalInputPin frontRightBumper(FEHIO:: P3_0);
+DigitalInputPin backLeftBumper(FEHIO:: P1_0);
+DigitalInputPin backRightBumper(FEHIO:: P0_0);
+
+DigitalEncoder rightEncoder(FEHIO::P0_0);
+DigitalEncoder leftEncoder(FEHIO::P0_1);
+
+int[10] powers;
+int[10] extraCounts;
+
+
+#define FULL_POWER 100
+#define LEFT 1
+#define RIGHT 2
+#define WHEEL_TO_FRONT ??   // For use w/ stationary turns
+#define TURN_COUNT 242      // Might be the wrong value
+#define INCH_COUNT ??       // # of encoder counts in an inch
+
+#define CLICKED 0
+
+
+
+/**
+ * For use with an exact needed distance.
+ * I.e., move the robot forward 9 inches.
+ */
+void driveDistance(int distance, int power){
+
+    resetEncoders();
+    int i = (power-10)/8;
+    
+    int neededCounts = getCounts(distance);
+
+    LCD.WriteLine("Driving Forward");
+    setMotorPowers(power);
+    
+    while(getCurrentCounts() < neededCounts);
+    
+    setMotorPowers(0);
+    LCD.WriteLine("Stopping");
+    Sleep(2.0);\
+    extraCounts[i] = getCurrentCounts() - neededCounts;
+}
+
+/**
+  * Moves the robot forward until two of it's sensors are clicked by the wall
+  */
+void driveToWall(int power, DigitalInputPin *sensor1, DigitalInputPin *sensor2){
+    LCD.WriteLine("Driving to wall")
+    leftMotor.SetPercent(power);
+    rightMotor.SetPercent(power);
+    while(sensor1.Value() !=CLICKED && sensor2.Value() != CLICKED);
+    leftMotor.SetPercent(0);
+    rightMotor.SetPercent(0);
+    LCD.WriteLine("Contact Made With Both Sensors");
+}
+
+/**
+  *
+  */
+void stationaryTurn(int angle, int direction){
+  char[6] dir = "Right\0";
+  if(direction == LEFT)
+      dir = "Left \0"
+  LCD.WriteLine("Turning ");
+  LCD.WriteLine(angle );
+  LCD.WriteLine(" degrees to the "); 
+  LCD.WriteLine(dir);
+  int rightPower = 30;    int leftPower = -30;
+  if(direction == RIGHT){
+      rightPower *=-1;  leftPower *=-1;
+  }
+  rightMotor.SetPercent(rightPower);
+  leftMotor.SetPercent(leftPower);
+  
+  while(getCurrentCounts() < GetTurnCounts(angle));
+  
+  setMotorPowers(0);
+  
+}
+
+
+// Returns the encoder counts it should take the robot to turn to the specified angle
+int GetTurnCounts(int angle){
+
+}
+
+int getCounts(int dist){
+  //Returns some value * dist
+}
+
+//Returns the average of the counts between the two encoders
+int getCurrentCounts(){
+    return ((rightEncoder.Counts() + leftEncoder.Counts())/2);
+}
+
+//Resets the encoder counts
+void resetEncoders(){
+  rightEncoder.ResetCounts();
+  leftEncoder.ResetCounts();
+}
+
+void setMotorPowers(int power){
+    rightMotor.setPercent(power);
+    leftMotor.setPercent(power);
+}
+
+
+
+
+//The functions below are all for completing tasks in a sequential order
+
+
+void WaitForStart(){
+    while(sensor.Value() isNotGreen);   //Clearly this needs to change
+}
+
+void MovePastSatellite(){
+
+}
+
+void TurnSatellite(){
+
+}
+
+int main(void){
+
+
+for(int i=0; i < 10; i++){
+  driveDistance(7,8*i+10);
+  powers[i] = 8*i+10;
+}
+
+for(int i=0; i < 10; i++){
+LCD.Write("Power: "); LCD.Write(powers[i]); LCD.Write("    Extra Counts: " ); LCD.WriteLine(extraCounts[i]);
+}
+
+return 0;
+}
