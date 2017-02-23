@@ -1,0 +1,191 @@
+#include<FEHLCD.h>
+#include<FEHIO.h>
+#include<FEHUtility.h>
+#include<FEHMotor.h>
+#include<FEHServo.h>
+#include<FEHUtility.h>
+
+
+//Change denominator in "turnCount" function to 3 when using our robot
+
+
+
+
+
+FEHMotor leftMotor (FEHMotor:: Motor2,12.0);
+FEHMotor rightMotor (FEHMotor:: Motor3,12.0);
+
+FEHServo topServo (FEHServo:: Servo0);
+FEHServo bottomServo (FEHServo:: Servo1);
+
+AnalogInputPin sensor(FEHIO::P2_0);
+
+DigitalInputPin frontLeftBumper(FEHIO:: P0_2);    //Each nonzero value is the int passed to "DriveToWall"
+DigitalInputPin frontRightBumper(FEHIO:: P0_3);
+DigitalInputPin backLeftBumper(FEHIO:: P0_0);
+DigitalInputPin backRightBumper(FEHIO:: P0_1);
+
+DigitalEncoder rightEncoder(FEHIO::P1_1);
+DigitalEncoder leftEncoder(FEHIO::P1_0);
+
+
+#define LEFT 1
+#define RIGHT 2
+//#define WHEEL_TO_FRONT ??   // For use w/ stationary turns
+#define INCH_COUNT 33.741       // # of encoder counts in an inch. Real value is 33.741
+#define PI 3.1415926536
+#define CLICKED 0
+#define POWER_DIF 1.181
+
+
+//Resets the encoder counts
+void resetEncoders(){
+  rightEncoder.ResetCounts();
+  leftEncoder.ResetCounts();
+}
+
+// Returns the encoder counts it should take the robot to turn to the specified angle
+//Needs to be modified to account for error
+int GetTurnCounts(float angle){
+    return (int)(318*3.5*angle/(3*PI));
+}
+
+//Needs to be modified to account for error
+int getCounts(float dist){
+    return (int)(INCH_COUNT*dist);
+}
+
+//Returns the average of the counts between the two encoders
+int getCurrentCounts(){
+    return ((rightEncoder.Counts() + leftEncoder.Counts())/2);
+}
+
+
+void setMotorPowers(int power){
+    rightMotor.SetPercent((int)(power*POWER_DIF));
+    leftMotor.SetPercent(-power);
+}
+
+
+/**
+ * For use with an exact needed distance.
+ * I.e., move the robot forward 9 inches.
+ */
+void driveDistance(float distance, int power){
+
+    resetEncoders();
+
+    int neededCounts = getCounts(distance);
+
+    LCD.WriteLine("Driving Forward");
+    setMotorPowers(power);
+
+    while(getCurrentCounts() < neededCounts);
+
+    setMotorPowers(0);
+    Sleep(0.5);
+    LCD.WriteLine("Stopping");
+}
+
+/**
+  * Moves the robot forward until two of it's sensors are clicked by the wall
+  */
+void driveToWall(int power, DigitalInputPin *sensor1, DigitalInputPin *sensor2){
+    LCD.WriteLine("Driving to wall");
+    leftMotor.SetPercent(power);
+    rightMotor.SetPercent(power);
+    while((*(sensor1)).Value() !=CLICKED && (*(sensor2)).Value() != CLICKED);
+    setMotorPowers(5);
+    Sleep(0.5);
+    setMotorPowers(0);
+    LCD.WriteLine("Contact Made With Both Sensors");
+}
+
+//For use when bumpers are not available
+void driveForTime(int power, int time){
+    int startTime = TimeNow();
+    setMotorPowers(power);
+    while(TimeNow()-startTime < time);
+    setMotorPowers(0);
+}
+
+
+void testPowerDifference(int power, int time){
+    int startTime = TimeNow();
+    setMotorPowers(power);
+    while(TimeNow()-startTime < time);
+    setMotorPowers(0);
+    LCD.Write("Right Counts: ");  LCD.WriteLine(rightEncoder.Counts());
+    LCD.Write("Left Counts: ");  LCD.WriteLine(leftEncoder.Counts());
+}
+
+/**
+  *
+  */
+void turn(float angle, int direction){
+  LCD.WriteLine("Turning ");
+  LCD.WriteLine(angle);
+  LCD.WriteLine(" radians to the ");
+  resetEncoders();
+  if(direction == RIGHT)
+      LCD.WriteLine("Right");
+  else
+      LCD.WriteLine("Left");
+  int rightPower = 30;    int leftPower = -30;
+  if(direction == RIGHT){
+      rightPower *=-1;  leftPower *=-1;
+  }
+  rightMotor.SetPercent((int)(rightPower*POWER_DIF));
+  leftMotor.SetPercent(-leftPower);
+
+
+  while(getCurrentCounts() < GetTurnCounts(angle));
+  setMotorPowers(0);
+  Sleep(1.0);
+}
+
+
+//The functions below are all for completing tasks in a sequential order
+
+
+void WaitForStart(){
+    LCD.Write("Waiting for the light...");
+    while(sensor.Value() >1);   //While dark
+    LCD.Write("Value read: ");
+    LCD.WriteLine(sensor.Value());
+}
+
+void MovePastSatellite(){
+
+}
+
+void TurnSatellite(){
+
+}
+
+
+void testRunOneWithCDS(){
+
+    WaitForStart();
+
+
+    driveDistance(10,20);
+    turn(PI/2,LEFT);
+    driveDistance(12,20);
+    turn(PI/2,RIGHT);
+    driveDistance(20,-65);
+    //Theoretically on the top level
+    turn(PI/2,RIGHT);
+    driveForTime(20,3);
+    driveDistance(15,-20);
+    turn(PI/2,LEFT);
+    driveForTime(-25,10);
+    LCD.WriteLine("End of test run");
+}
+
+int main(void){
+    testRunOneWithCDS();
+return 0;
+}
+
+
