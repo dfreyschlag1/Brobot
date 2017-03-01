@@ -1,0 +1,57 @@
+#include <FEHLCD.h>
+#include <FEHIO.h>
+#include <FEHUtility.h>
+#include <FEHMotor.h>
+#include <FEHServo.h>
+
+AnalogInputPin left_opt(FEHIO::P0_0);
+AnalogInputPin mid_opt(FEHIO::P0_1);
+AnalogInputPin right_opt(FEHIO::P0_2);
+FEHMotor left(FEHMotor::Motor3, 12.0);
+FEHMotor right(FEHMotor::Motor2, 12.0);
+
+int main(void)
+{
+    float x, y;
+    LCD.Clear( FEHLCD::Black );
+    LCD.SetFontColor( FEHLCD::White );
+
+while(!LCD.Touch(&x,&y)); //Wait for screen to be pressed
+while(LCD.Touch(&x,&y)); //Wait for screen to be unpressed
+
+#define LINE_ON_RIGHT 0
+#define STRAIGHT 1
+#define LINE_ON_LEFT 2
+
+int state;
+
+while (true) {
+
+    if (right_opt.Value() < 1.0 && mid_opt.Value() < 1.0) {
+        state = LINE_ON_RIGHT;
+    }
+    else if (left_opt.Value() < 1.0 && mid_opt.Value() < 1.0) {
+        state = LINE_ON_LEFT;
+    }
+    else {
+        state = STRAIGHT;
+    }
+
+    switch (state) {
+        case LINE_ON_RIGHT:
+            right.SetPercent(15);
+            left.SetPercent(7);
+            break;
+        case STRAIGHT:
+            right.SetPercent(10);
+            left.SetPercent(10);
+            Sleep(100);
+            break;
+        case LINE_ON_LEFT:
+            right.SetPercent(7);
+            left.SetPercent(15);
+            break;
+}
+
+}
+}
