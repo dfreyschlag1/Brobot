@@ -1,0 +1,176 @@
+#include <FEHLCD.h>
+#include <FEHIO.h>
+#include <FEHUtility.h>
+#include <FEHRPS.h>
+#include <FEHMotor.h>
+#include <Math.h>
+#include <FEHSD.h>
+
+FEHMotor right(FEHMotor::Motor3, 12.0);
+FEHMotor left(FEHMotor::Motor2, 12.0);
+
+DigitalEncoder ren(FEHIO::P0_0);
+DigitalEncoder len(FEHIO::P0_1);
+
+#define PI 3.1415
+#define RIGHT -1
+#define LEFT 1
+
+bool isTurning = false;
+
+void check_x_plus(float x_coordinate) //using RPS while robot is in the +x direction
+{
+    //check whether the robot is within an acceptable range
+    LCD.WriteLine("Checking X Coordinate");
+    while(RPS.X() < x_coordinate - 1 || RPS.X() > x_coordinate + 1)
+    {
+        if(RPS.X() > x_coordinate)
+        {
+            right.SetPercent(-15);
+            left.SetPercent(-15);
+        }
+        else if(RPS.X() < x_coordinate)
+        {
+            right.SetPercent(15);
+            left.SetPercent(15);
+        }
+        else{
+            right.Stop();
+            left.Stop();
+        }
+    }
+    right.Stop();
+    left.Stop();
+}
+
+void check_y_minus(float y_coordinate) //using RPS while robot is in the -y direction
+{
+    //check whether the robot is within an acceptable range
+    LCD.WriteLine("Checking Y Coordinate");
+    while(RPS.Y() < y_coordinate - 1 || RPS.Y() > y_coordinate + 1)
+    {
+        if(RPS.Y() > y_coordinate)
+        {
+            right.SetPercent(-15);
+            left.SetPercent(-15);
+        }
+        else if(RPS.Y() < y_coordinate)
+        {
+            right.SetPercent(15);
+            left.SetPercent(15);
+        }
+        else{
+            right.Stop();
+            left.Stop();
+        }
+    }
+    right.Stop();
+    left.Stop();
+}
+
+void check_y_plus(float y_coordinate) //using RPS while robot is in the +y direction
+{
+    //check whether the robot is within an acceptable range
+    LCD.WriteLine("Checking Y Coordinate");
+    while(RPS.Y() < y_coordinate - 1 || RPS.Y() > y_coordinate + 1)
+    {
+        if(RPS.Y() > y_coordinate)
+        {
+            right.SetPercent(-15);
+            left.SetPercent(-15);
+
+        }
+        else if(RPS.Y() < y_coordinate)
+        {
+            right.SetPercent(15);
+            left.SetPercent(15);
+        }
+        else{
+            right.Stop();
+            left.Stop();
+        }
+    }
+    right.Stop();
+    left.Stop();
+}
+
+void turn(float angle, int dir) {
+        ren.ResetCounts();
+        len.ResetCounts();
+        right.SetPercent(-20*dir);
+        left.SetPercent(20*dir);
+        while (((ren.Counts()+len.Counts()) / 2) < (int)(((318*4*angle) / (2.5*PI))));
+        right.Stop();
+        left.Stop();
+}
+
+void check_heading(float heading) //using RPS
+{
+    LCD.Clear();
+    LCD.WriteLine("Checking Heading");
+    int degreeError = 2;
+    int intHeading = (int)(heading+degreeError)%360-degreeError;
+    while (abs((int)(RPS.Heading()+45)%360-45-heading)>degreeError)  {
+        int intRPSHeading = (int)(RPS.Heading()+45)%360-45;
+        if (intRPSHeading>intHeading) {
+            turn(PI/90, RIGHT);
+            LCD.WriteLine("Turning Right");
+            Sleep(.5);
+        }
+        else if(intRPSHeading<intHeading){
+            turn(PI/90, LEFT);
+            LCD.WriteLine("Turning Left");
+            Sleep(.5);
+        }
+        else{
+            LCD.WriteLine("In Range");
+            break;
+        }
+
+    }
+    right.Stop();
+    left.Stop();
+    Sleep(1.0);
+}
+
+void move_forward(int percent, int counts) {
+
+    LCD.WriteLine("Moving Forward");
+
+    ren.ResetCounts();
+    len.ResetCounts();
+    right.SetPercent(percent);
+    left.SetPercent(percent);
+    LCD.WriteLine("Driving Straight");
+    while (((ren.Counts()+len.Counts()) / 2) < counts);
+    right.Stop();
+    left.Stop();
+}
+
+int main()
+{
+    SD.OpenLog();
+    //Initialize RPS and declare any variables you might need
+    SD.Printf("%f, %f\n", RPS.X(), RPS.Y());
+    turn(PI/90, LEFT);
+    RPS.InitializeTouchMenu();
+    move_forward(20, 526);  //drive 6 inches in +y direction
+    check_y_plus(18.0);     //check that we are at the y coordinate of point B +/- 1 inch
+    LCD.Write("Y Position: "); LCD.WriteLine(RPS.Y());
+    SD.Printf("%f, %f/n", RPS.X(), RPS.Y());
+    turn(PI/2,LEFT);   //turn right 90 degrees
+    check_heading(0);	       //check that the heading is actually correct +/- 2 degrees
+    LCD.Write("RPS heading: "); LCD.WriteLine(RPS.Heading());
+    move_forward(20, 972); //drive 21 inches in +x direction
+    check_x_plus(29.5);     //check that we are at the x coordinate of point C +/- 1 inch
+    SD.Printf("%f, %f/n", RPS.X(), RPS.Y());
+    turn(PI/2,RIGHT);   //turn right 90 degrees
+    check_heading(270);      	       //check that the heading is actually correct +/- 2 degrees
+    move_forward(-20, 162);  //drive 6 inches in -y direction
+    check_y_plus(22.0);    //check that we are at the y coordinate of point D +/- 1 inch
+    SD.Printf("%f, %f/n", RPS.X(), RPS.Y());
+    LCD.Write("Y Position: "); LCD.WriteLine(RPS.Y());
+    check_heading(270);               //check that the heading is actually correct +/- 2 degrees
+    LCD.WriteLine("Done");
+    SD.CloseLog();
+}
