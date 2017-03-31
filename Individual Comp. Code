@@ -1,0 +1,662 @@
+#include<FEHLCD.h>
+#include<FEHIO.h>
+#include<FEHUtility.h>
+#include<FEHMotor.h>
+#include<FEHServo.h>
+#include<FEHUtility.h>
+#include<FEHRPS.h>
+#include<Math.h>
+
+
+
+FEHMotor leftMotor (FEHMotor:: Motor2,12.0);
+FEHMotor rightMotor (FEHMotor:: Motor3,12.0);
+
+FEHServo servo (FEHServo:: Servo0);
+
+AnalogInputPin sensor(FEHIO::P2_0);
+
+DigitalInputPin frontLeftBumper(FEHIO:: P0_2);    //Each nonzero value is the int passed to "DriveToWall"
+DigitalInputPin frontRightBumper(FEHIO:: P0_3);
+DigitalInputPin backLeftBumper(FEHIO:: P0_0);
+DigitalInputPin backRightBumper(FEHIO:: P0_1);
+
+DigitalEncoder rightEncoder(FEHIO::P1_1);
+DigitalEncoder leftEncoder(FEHIO::P1_0);
+
+AnalogInputPin lineSensor(FEHIO:: P3_0);
+
+DigitalOutputPin redLightOne(FEHIO:: P2_1);
+DigitalOutputPin redLightTwo(FEHIO:: P2_2);
+DigitalOutputPin blueLightOne(FEHIO:: P2_4);
+DigitalOutputPin blueLightTwo(FEHIO:: P2_5);
+
+
+#define LEFT 1
+#define RIGHT 2
+#define INCH_COUNT 33.741       // # of encoder counts in an inch
+#define PI 3.1415926536
+#define CLICKED 0
+#define POWER_DIF 1.16
+#define FORWARD 1
+#define BACKWARD -1
+#define WAIT 1000
+
+#define VERTICAL 1
+#define HORIZONTAL -1
+
+#define RED 1
+#define BLUE 2
+
+#define ONLINE 1
+#define OFFLINE 2
+
+float lightColor;
+
+float lastTime;
+float lastCount;
+bool firstCheck = true;
+bool crossedLine= false;
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+//FUNCTIONS IN THE SECTION BELOW ARE BASIC MOTOR/ENCODER FUNCTONS
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+
+
+//Resets the encoder counts
+void resetEncoders(){
+  rightEncoder.ResetCounts();
+  leftEncoder.ResetCounts();
+}
+
+
+
+// Returns the encoder counts it should take the robot to turn to the specified angle
+//Needs to be modified to account for error
+int GetTurnCounts(float angle, int power){
+    return (int)((330*3.5*angle/(3*PI)));
+}
+
+//Returns the extra anticipated encoder counts after the motors are turned off
+//based on the speed the robot was traveling.
+int getExtraCounts(int power){
+    return (int)(.0158*power*power + .6228*power - 8.8);
+}
+//Returns the necessary encoder counts for the robot to travel a particular distance
+//Takes the stopping error into account.
+int getCounts(float dist, int power){
+    return (int)(INCH_COUNT*dist- getExtraCounts(power));
+}
+
+//Returns the average of the counts between the two encoders
+int getCurrentCounts(){
+    return ((rightEncoder.Counts() + leftEncoder.Counts())/2);
+}
+
+//Sets both motors to the given power so the robot will drive straight
+void setMotorPowers(int power){
+    rightMotor.SetPercent((int)(power*POWER_DIF));  //the right motor is weaker and needs a poewr modification
+    leftMotor.SetPercent(-power);                   //Multiplied by -1 due to the opposite orientation of the other motor
+}
+
+//Returns how many inches extra the robot will travel at a given power
+float getPowerError(int power){
+    power = abs((float)(power));
+    float extra = (.0158*power*power + .6228*power - 8.8)/(INCH_COUNT);
+    return extra;
+}
+
+//Returns true if the robot is within a given range around an RPS coordinate.
+//The size of the range is based on the error from the momentum when the motors are stopped.
+bool inStopRange(float location, int power,int vert){
+    float error = getPowerError(power);
+    if(vert == VERTICAL){
+        if(RPS.Y() <location+error && RPS.Y() > location -error)
+            return true;
+        else
+            return false;
+    }
+    else{	//If travelling horizontally
+        if(RPS.X() <location+error && RPS.X() > location -error)
+            return true;
+        else
+            return false;
+    }
+}
+
+//Returns true if the optosensor is over a reflective surface.
+//Val is the reading from the optosensor
+bool isOnLine(float val){
+    if(abs(val-1)<.3)
+        return true;
+    return false;
+}
+
+//Returns the sign of the input
+int sign(float c){
+    if(c>0)
+        return 1;
+    return -1;
+}
+
+//Returns the current RPS heading of the robot in a range from -45 to 315 degrees.
+float getAngle(){
+    return (float)((int)(RPS.Heading()+45)%360-45);
+}
+
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+//ALL FUNCTIONS IN THE SECTION BELOW ARE FOR ROBOT MOVEMENT
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+
+/**
+ * For use with an exact needed distance.
+ * I.e., move the robot forward 9 inches.
+ */
+void driveDistance(float distance, int power){
+
+    resetEncoders();
+
+    int neededCounts = getCounts(distance,power);
+
+    setMotorPowers(power);
+    float start = TimeNow();
+
+    while(getCurrentCounts() < neededCounts && TimeNow()-start < 6.0);
+    if(TimeNow()-start>5.0){
+        driveDistance(getCurrentCounts()/INCH_COUNT-1,-1*power);
+    }
+
+    setMotorPowers(0);
+    Sleep(0.1);
+}
+
+/**
+ * @brief checkDistance - Moves the robot until it is within .7 inches of the given coordiante
+ * @param loc - The desired location for the robot
+ * @param orient - 1 if the robot is facing up the course, -1 if it is facing down the course
+ * @param vert - VERTICAL if the robot is travelling vertically, or HORIZONTALLY otherwise (only used at 90 degree angles)
+ */
+void checkDistance(float loc, int orient, int vert){
+    float dif;
+    dif = 0;
+    float start = TimeNow();
+    if(vert == VERTICAL){
+        while(TimeNow()-start<2.0){
+            float y = RPS.Y();
+            Sleep(.2);
+            if(y>1){
+                dif = y - loc;
+                break;
+            }
+        }
+    }
+    else{
+        while(TimeNow()-start<2.0){
+            float x = RPS.X();
+            Sleep(.2);
+            if(x>1){
+                dif = x - loc;
+                break;
+            }
+        }
+    }
+    if(abs(dif)>.7){
+        driveDistance(abs(dif),20*sign(dif*-1*orient));
+        Sleep(.2);
+        checkDistance(loc,orient,vert);
+    }
+    Sleep(.1);
+}
+
+/**
+ * @brief driveToWall - Drives the robot until the two sensors are both pressed
+ * @param power - The power at which the motors will drive the robot
+ * @param sensor1 - One of the sensors that will be pressed
+ * @param sensor2 - The other sensor that will be pressed
+ */
+void driveToWall(int power, DigitalInputPin *sensor1, DigitalInputPin *sensor2){
+    setMotorPowers(power);
+    while((*(sensor1)).Value() !=CLICKED || (*(sensor2)).Value() != CLICKED);
+    setMotorPowers(power/1.5);
+    Sleep(.15);
+    setMotorPowers(0);
+}
+
+/**
+ * @brief driveForTime - Drives the robot for a specific amount of time. Useful when no bump switches are available.
+ * @param power - The power the motors will be set to.
+ * @param time - How long the robot will travel for
+ */
+void driveForTime(int power, float time){
+    float startTime = TimeNow();
+    setMotorPowers(power);
+    while(TimeNow()-startTime < time);
+    setMotorPowers(0);
+}
+
+/**
+ * @brief turn - Turns the robot the specified amount of degrees in the given direction
+ * @param angle - How many radians the robot needs to turn
+ * @param direction - The direction the robot needs to turn
+ */
+void turn(float angle, int direction){
+
+  resetEncoders();
+  int rightPower = 30;    int leftPower = -30;
+  if(direction == RIGHT){
+      rightPower *=-1;  leftPower *=-1;
+  }
+  rightMotor.SetPercent((int)(rightPower*POWER_DIF));
+  leftMotor.SetPercent(-leftPower);
+
+  float start = TimeNow();
+
+  while(getCurrentCounts() < GetTurnCounts(angle,30) && TimeNow() - start < 1.5);
+  setMotorPowers(0);
+  Sleep(.1);
+}
+
+/**
+ * @brief turnForTime - Turns the robot for a given amount of time
+ *                      Used when the robot angle the robot turns will vary greatly
+ * @param time - The time the robot should turn for.
+ * @param direction - the direction the robot should turn.
+ */
+void turnForTime(float time, int direction){
+
+  resetEncoders();
+  int rightPower = 20;    int leftPower = -20;
+  if(direction == RIGHT){
+      rightPower *=-1;  leftPower *=-1;
+  }
+  rightMotor.SetPercent((int)(rightPower*POWER_DIF));
+  leftMotor.SetPercent(-leftPower);
+  float start = TimeNow();
+  while(TimeNow()-start<time);
+  setMotorPowers(0);
+  Sleep(.1);
+}
+
+/**
+ * @brief quickTurn - Identical to turn(), but also has the option to reset the encoders
+ * @param angle - How many radians the robot needs to turn
+ * @param direction - Which direction the robot needs to turn
+ * @param reset - True if the encoder counts should be reset.
+ */
+void quickTurn(float angle, int direction, bool reset){
+
+  if (reset)
+    resetEncoders();
+  int rightPower = 30;    int leftPower = -30;
+
+  int startCount = getCurrentCounts();
+
+  if(direction == RIGHT){
+      rightPower *=-1;  leftPower *=-1;
+  }
+  rightMotor.SetPercent((int)(rightPower*POWER_DIF));
+  leftMotor.SetPercent(-leftPower);
+
+  float start = TimeNow();
+
+  while(getCurrentCounts() - startCount < GetTurnCounts(angle,30) && TimeNow() - start < 1.5);
+
+  setMotorPowers(0);
+  Sleep(.1);
+}
+
+/**
+ * @brief pivotOnWheel - Pivots 90 degrees about the wheel specified.
+ * @param wheel - The wheel that remains stationary
+ * @param direction - FORWARD turns the robot towards the front of the vehicle. BACKWARD does the opposite
+ */
+void pivotOnWheel(int wheel, int direction){
+    resetEncoders();
+    if (wheel == RIGHT)
+        leftMotor.SetPercent(30*direction*-1);
+    else
+        rightMotor.SetPercent(30*direction*POWER_DIF);
+    int counts = 2*GetTurnCounts(PI/1.93,25);
+    float start = TimeNow();
+
+    while(rightEncoder.Counts()<counts-5 && leftEncoder.Counts() < counts-5 && TimeNow() - start < 2);
+
+    setMotorPowers(0);
+    Sleep(.1);
+
+}
+
+/**
+ * @brief correctAngle - Adjusts the angle of the robot until it is within 2.5 degrees of the proper angle.
+ * @param neededAngle - The angle ohe robot needs to turn to.
+ */
+void correctAngle(float neededAngle){
+    float start = TimeNow();
+    while(abs(getAngle() - neededAngle)>2.5){
+        if(getAngle()>neededAngle)
+            quickTurn(PI/180,RIGHT,true);
+        else if(getAngle()<neededAngle)
+            quickTurn(PI/180,LEFT, true);
+        else if(TimeNow() - start > 5)
+            driveDistance(1,-20);
+    }
+    LCD.Write("The angle is "); LCD.WriteLine(RPS.Heading());
+}
+
+/**
+ * @brief driveToRange - Drives to a range on the course designated by the user.
+ *                       Useful when either the x or y coordinate will not be precise before this is called.
+ * @param power - The power the motors are set to
+ * @param location - The coordinate that the coordinate range will be entered around
+ * @param vert - Whether the robot is driving vertically or horizontally on the course
+ */
+void driveToRange(int power, float location, int vert, int orient){
+    resetEncoders();
+    setMotorPowers(power);
+    float start = TimeNow();
+
+    while(!inStopRange(location,power,vert)){
+
+        //Drives the robot to the (hopefully) correct spot if it missed the location
+        if(TimeNow() - start >3.5){
+            int d;
+            if(vert == VERTICAL)
+                d = RPS.Y() - location;
+            else
+                d = RPS.X() - location;
+
+            int k = d;
+            if(k<0) k = -k;
+            driveDistance(k, 20*sign(orient*-1*d));
+        }
+    }
+    setMotorPowers(0);
+}
+
+void superTurn(float angle, int direction, float heading){
+    resetEncoders();
+    int rightPower = 30;    int leftPower = -30;
+    if(direction == RIGHT){
+        rightPower *=-1;  leftPower *=-1;
+    }
+    rightMotor.SetPercent((int)(rightPower*POWER_DIF));
+    leftMotor.SetPercent(-leftPower);
+    while(getCurrentCounts() < GetTurnCounts(angle,30));
+    setMotorPowers(0);
+    Sleep(.1);
+    correctAngle(heading);
+
+}
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+// ALL FUNCTIONS IN THE SECTION BELOW ARE FOR COMPLETING INDIVIDUAL TASKS
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+/**
+ * @brief WaitForStart - Waits for the begining light to turn on
+ */
+void WaitForStart(){
+    LCD.Write("Waiting for the light...");
+    float time = TimeNow();
+    while(sensor.Value() >1 && TimeNow() - time < 55);   //While dark
+    LCD.Write("Value read: ");
+    LCD.WriteLine(sensor.Value());
+    servo.SetDegree(0);
+}
+
+/**
+ * @brief getLightMin - Finds the lowest value read by thge light sensor over a span of 1 second
+ * @return - The lowest value read by the light sensor
+ */
+float getLightMin(){
+    float lightMin = 3.3;
+
+    float start = TimeNow();
+
+    while(TimeNow() - start <1.0)
+        if (sensor.Value() < lightMin)
+            lightMin = sensor.Value();
+
+    lightColor = lightMin;
+    return lightMin;
+}
+
+/**
+ * @brief getLightColor - Slowly drives the robot over the light to find the most extreme voltage value
+ */
+void getLightColor(){
+   setMotorPowers(15);
+   float lightMin = getLightMin();
+   if(lightMin<.5){
+       lightColor = RED;
+   }
+   else
+      lightColor = BLUE;
+      setMotorPowers(0);
+}
+
+
+/**
+ * @brief displayLightColor - Displays the light color to the screen.
+ */
+void displayLightColor(){
+    if (lightColor == BLUE){
+        blueLightOne.Write(true);
+        blueLightTwo.Toggle();
+        Sleep(1);
+    }
+    else{
+        redLightOne.Write(true);
+        redLightTwo.Toggle();
+        Sleep(1);
+    }
+}
+
+/**
+ * @brief initialize - Allows user to choose course and calibrates servo
+ */
+void initialize(){
+    RPS.InitializeTouchMenu();
+    servo.SetMin(500);
+    servo.SetMax(2425);
+    servo.SetDegree(90);
+    redLightOne.Write(false);
+    redLightTwo.Write(false);
+    redLightOne.Write(false);
+    redLightOne.Write(false);
+
+}
+
+/**
+ * @brief toggleLever - Pulls the lever down and reverses a few inches
+ */
+void toggleLever(){
+    servo.SetDegree(80);
+    Sleep(.25);
+    driveForTime(-20,.4);
+    servo.SetDegree(0);
+    Sleep(.25);
+    driveDistance(.6,15);
+}
+
+/**
+ * @brief turnSatellite - Turns the satellite the full 90 degrees
+ */
+void turnSatellite(){
+    servo.SetDegree(55);
+    driveDistance(7.5,-20);
+    turnForTime(.4,RIGHT);
+
+}
+
+void removeCore(){
+    driveDistance(7,-20);
+    servo.SetDegree(0);
+}
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+//THE FUNCTIONS BELOW ARE ALL FOR MOVING BETWEEN PARTS OF THE COURSE
+
+//<><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
+
+
+
+void moveToLight(){
+    driveDistance(13,25);
+    turn(PI/2,LEFT);
+    driveToWall(-20,&backLeftBumper, &backRightBumper);
+    driveDistance(6,25);
+}
+
+void alignWithSatellite(){
+    turn(PI-PI/90,RIGHT);
+    correctAngle(185);
+    driveToWall(-30,&backLeftBumper,&backRightBumper);
+    driveDistance(5,20);
+    pivotOnWheel(RIGHT,FORWARD);
+    correctAngle(90);           //Was 95
+    setMotorPowers(-20);
+    while(backLeftBumper.Value()!=CLICKED && backRightBumper.Value() !=CLICKED);
+    pivotOnWheel(RIGHT,FORWARD);
+    turnForTime(.2,RIGHT);
+    driveForTime(20,.6);
+    correctAngle(-3);
+    turn(PI/40,RIGHT);
+    driveDistance(2,-15);
+}
+
+void moveToLever(){
+    servo.SetDegree(0);
+    Sleep(.2);
+    driveDistance(2.0,-25);
+    superTurn(PI/2+PI/6,LEFT,90);
+    driveDistance(3,30);
+    superTurn(PI,RIGHT,270);
+    setMotorPowers(-39);
+    while(RPS.Y()<41);
+    setMotorPowers(0);
+    Sleep(.5);
+    checkDistance(46,-1,VERTICAL);
+    superTurn(PI/2,RIGHT,180);
+    setMotorPowers(20);
+    while(RPS.X()>15.5);
+    Sleep(.6);
+    setMotorPowers(0);
+}
+
+void moveToCore(){
+    superTurn(PI/2,RIGHT,90);
+    setMotorPowers(15);
+    servo.SetDegree(0);
+
+    float start = TimeNow();
+    //Waits until the robot goes on then line, and then off the line
+    while(!isOnLine(lineSensor.Value()))
+        if(TimeNow() - start > 4){
+            driveDistance(2,-20);
+            turn(PI/30,RIGHT);
+            driveDistance(10,-20);
+            turn(PI/30,LEFT);
+            setMotorPowers(15);
+            start = TimeNow();
+        }
+    while(isOnLine(lineSensor.Value()));
+
+    LCD.WriteLine("Passed the Line");
+    driveDistance(3,20);
+    turn(PI/4.45,LEFT);
+    driveDistance(2.8,-15);
+    servo.SetDegree(90);
+    driveForTime(15,1.0);
+    turn(PI/45,RIGHT);
+}
+
+void holdButton(){
+    turn(PI/4.7,LEFT);
+    driveToWall(-25,&backLeftBumper,&backRightBumper);
+    driveDistance(4,20);
+    pivotOnWheel(LEFT,FORWARD);
+    correctAngle(270);
+    driveForTime(-40,6);
+}
+
+void moveToBin(){
+    driveDistance(1,20);
+    turn(PI/20,RIGHT);
+    driveDistance(36,30);
+    checkDistance(17,-1,VERTICAL);
+    superTurn(PI/2,RIGHT,180);
+    if(lightColor == RED)
+        driveToRange(25,9,HORIZONTAL,-1);
+    else
+        driveToRange(25,17,HORIZONTAL,-1);
+
+    superTurn(PI/2,LEFT,270);
+    driveForTime(20,1.3);
+    driveDistance(2,-20);
+
+}
+
+void depositCore(){
+    for(int i=0; i < 25; i++){
+        servo.SetDegree(2*i);
+        Sleep(.02);
+    }
+    for(int i =0; i < 3; i++){
+        servo.SetDegree(90);
+        Sleep(.15);
+        servo.SetDegree(50);
+        Sleep(.15);
+    }
+    servo.SetDegree(0);
+}
+
+void endRun(){
+    pivotOnWheel(RIGHT,BACKWARD);
+    driveToWall(-30,&backLeftBumper,&backRightBumper);
+    pivotOnWheel(LEFT,FORWARD);
+    driveForTime(30,2.5);
+}
+
+
+
+void realRun(){
+    initialize();
+    WaitForStart();
+    moveToLight();
+    getLightColor();
+    displayLightColor();
+    alignWithSatellite();
+    turnSatellite();
+    moveToLever();
+    toggleLever();
+    moveToCore();
+    removeCore();
+    holdButton();
+    moveToBin();
+    depositCore();
+    endRun();
+
+}
+
+
+int main(void){
+    LCD.Write("Turned on");
+    redLightOne.Write(true);
+    redLightTwo.Write(false);
+    blueLightTwo.Write(true);
+    blueLightOne.Write(true);
+    //realRun();
+return 0;
+}
+
+
